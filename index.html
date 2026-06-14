@@ -234,6 +234,63 @@
     transition: opacity .3s;
   }
   .dim-hint.show { opacity: 0.9; }
+
+  /* 记录编辑浮层 */
+  .editor {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.65);
+  }
+  .editor.show { display: flex; }
+  .editor-card {
+    background: #17140f;
+    border: 1px solid rgba(201, 162, 106, 0.3);
+    border-radius: 4vmin;
+    padding: 6vmin 7vmin;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4.5vmin;
+    min-width: 52vmin;
+  }
+  .editor-title {
+    color: #c9a26a;
+    font-size: 3.8vmin;
+    font-weight: 700;
+  }
+  .editor-input {
+    appearance: none; -webkit-appearance: none;
+    font-family: inherit;
+    font-size: 6.5vmin;
+    font-weight: 700;
+    color: #c9a26a;
+    background: #000;
+    border: 1px solid rgba(201, 162, 106, 0.4);
+    border-radius: 2.5vmin;
+    padding: 2vmin 4vmin;
+    text-align: center;
+  }
+  .editor-actions { display: flex; gap: 3vmin; }
+  .ed-btn {
+    appearance: none; -webkit-appearance: none;
+    font-family: inherit;
+    font-size: 3.6vmin;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 2.2vmin 5vmin;
+    cursor: pointer;
+    border: 2px solid rgba(201, 162, 106, 0.32);
+    background: transparent;
+    color: #b09a6e;
+    line-height: 1;
+  }
+  .ed-btn:active { transform: scale(0.96); }
+  .ed-save { background: rgba(201, 162, 106, 0.18); }
+  .ed-del { color: #cc8a6a; border-color: rgba(204, 138, 106, 0.4); }
 </style>
 </head>
 <body>
@@ -276,6 +333,19 @@
 
   <div class="dimmer" id="dimmer"></div>
   <div class="dim-hint" id="dimHint"></div>
+
+  <!-- 记录编辑浮层 -->
+  <div class="editor" id="editor">
+    <div class="editor-card">
+      <div class="editor-title" id="editorTitle">记录时间</div>
+      <input type="time" class="editor-input" id="timeInput">
+      <div class="editor-actions">
+        <button class="ed-btn ed-del" id="edDelete">删除</button>
+        <button class="ed-btn ed-cancel" id="edCancel">取消</button>
+        <button class="ed-btn ed-save" id="edSave">保存</button>
+      </div>
+    </div>
+  </div>
 
 <script>
   // ===================== Bark 推送配置 =====================
@@ -371,10 +441,7 @@
       chip.textContent = fmtClock(ts);
       chip.addEventListener('click', (e) => {
         e.stopPropagation();
-        records = records.filter(t => t !== ts);
-        saveRecords();
-        renderRecords();
-        renderElapsed();
+        openEditor(ts);
       });
       recordsEl.appendChild(chip);
     });
@@ -402,6 +469,61 @@
     saveRecords();
     renderRecords();
     renderElapsed();
+  });
+
+  // ---- 记录编辑浮层：修改 / 删除 ----
+  const editor = document.getElementById('editor');
+  const editorTitle = document.getElementById('editorTitle');
+  const timeInput = document.getElementById('timeInput');
+  let editingTs = null;
+
+  function openEditor(ts) {
+    editingTs = ts;
+    const d = new Date(ts);
+    timeInput.value = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    editorTitle.textContent = '记录时间：' + fmtClock(ts);
+    editor.classList.add('show');
+  }
+  function closeEditor() {
+    editor.classList.remove('show');
+    editingTs = null;
+  }
+  function commitAndRefresh() {
+    saveRecords();
+    renderRecords();
+    // 重算距离：若改动/删除影响了最新一条，距离会随之更新；否则保持不变
+    renderElapsed();
+  }
+
+  document.getElementById('edSave').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (editingTs == null) return;
+    const v = timeInput.value; // "HH:MM"
+    if (v) {
+      const parts = v.split(':');
+      const hh = parseInt(parts[0], 10), mm = parseInt(parts[1], 10);
+      if (!isNaN(hh) && !isNaN(mm)) {
+        const d = new Date(editingTs); // 沿用原记录的日期，仅改时分
+        d.setHours(hh, mm, 0, 0);
+        const idx = records.indexOf(editingTs);
+        if (idx !== -1) records[idx] = d.getTime();
+      }
+    }
+    closeEditor();
+    commitAndRefresh();
+  });
+  document.getElementById('edDelete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    records = records.filter(t => t !== editingTs);
+    closeEditor();
+    commitAndRefresh();
+  });
+  document.getElementById('edCancel').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeEditor();
+  });
+  editor.addEventListener('click', (e) => {
+    if (e.target === editor) closeEditor(); // 点浮层背景关闭
   });
 
   // ---- 来一下：每个联系人一个按钮，单独推送 ----
@@ -469,7 +591,7 @@
   })();
 
   document.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button')) return; // 按钮上的操作交给按钮自己
+    if (e.target.closest('button, input, .editor')) return; // 按钮/输入/浮层交给各自处理
     dragStartY = e.clientY;
     dragStartDim = dimLevel;
     moved = false;
