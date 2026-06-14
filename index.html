@@ -153,21 +153,21 @@
     font-family: inherit;
     font-size: calc(var(--cell) * 0.34);
     font-weight: 700;
-    color: #c9a26a;
+    color: #80693f;
     background: transparent;
-    border: 2px solid rgba(201, 162, 106, 0.5);
+    border: 2px solid rgba(201, 162, 106, 0.22);
     border-radius: 999px;
     padding: calc(var(--cell) * 0.07) calc(var(--cell) * 0.2);
     font-variant-numeric: tabular-nums;
     cursor: pointer;
     line-height: 1;
   }
-  .chip:active { background: rgba(201, 162, 106, 0.18); }
+  .chip:active { background: rgba(201, 162, 106, 0.1); }
   /* 模块二：距离上一次 */
   .elapsed {
     font-size: calc(var(--cell) * 0.32);
     font-weight: 700;
-    color: #c9a26a;
+    color: #8a7048;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
   }
@@ -176,19 +176,62 @@
     font-family: inherit;
     font-size: calc(var(--cell) * 0.4);
     font-weight: 800;
-    color: #000;
-    background: #c9a26a;
-    border: none;
+    color: #a08754;
+    background: rgba(201, 162, 106, 0.1);
+    border: 2px solid rgba(201, 162, 106, 0.28);
     border-radius: 999px;
     padding: calc(var(--cell) * 0.16) calc(var(--cell) * 0.7);
     cursor: pointer;
     line-height: 1;
   }
-  .rec-btn:active { transform: scale(0.96); }
+  .rec-btn:active { transform: scale(0.96); background: rgba(201, 162, 106, 0.18); }
+  /* 来一下：推送按钮（时钟上方，描边样式以区别于「喝完了」） */
+  .call-btn {
+    appearance: none; -webkit-appearance: none;
+    font-family: inherit;
+    font-size: calc(var(--cell) * 0.32);
+    font-weight: 800;
+    color: #80693f;
+    background: transparent;
+    border: 2px solid rgba(201, 162, 106, 0.28);
+    border-radius: 999px;
+    padding: calc(var(--cell) * 0.12) calc(var(--cell) * 0.6);
+    cursor: pointer;
+    line-height: 1;
+    transition: background .2s, color .2s, opacity .2s;
+  }
+  .call-btn:active { transform: scale(0.96); }
+  .call-btn.sent { background: rgba(201, 162, 106, 0.18); color: #a08754; }
+  .call-btn:disabled { opacity: 0.55; }
+
+  /* 上下滑动调暗：黑色蒙版（网页无法改系统亮度，用蒙版模拟） */
+  .dimmer {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;   /* 纯视觉，不拦截点按 */
+    z-index: 50;
+  }
+  .dim-hint {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 51;
+    pointer-events: none;
+    color: #c9a26a;
+    font-size: 7vmin;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  .dim-hint.show { opacity: 0.9; }
 </style>
 </head>
 <body>
   <div class="stage">
+  <button class="call-btn" id="callBtn">来一下</button>
   <div class="clock">
     <div class="flip" id="h1">
       <div class="card top"><div class="digit">0</div></div>
@@ -224,7 +267,22 @@
   </div>
   </div>
 
+  <div class="dimmer" id="dimmer"></div>
+  <div class="dim-hint" id="dimHint"></div>
+
 <script>
+  // ===================== Bark 推送配置 =====================
+  // 把下面两个占位符换成两台手机 Bark App 首页显示的 key（22 位字符串）
+  const BARK_KEYS = [
+    'mLjHs43zVgDTjGWVtBhJrH',   // 手机一
+    '7GraXZMisGw7WZYWbt34D',    // 手机二
+  ];
+  const BARK_SERVER = 'https://api.day.app'; // 官方公共服务器；自建可改成 https://你的域名
+  const BARK_TITLE  = '来一下';
+  const BARK_BODY   = '宝宝找你～';
+  const BARK_GROUP  = '夜灯时钟';            // 通知分组，便于在手机上归类
+  // ========================================================
+
   const slots = ['h1', 'h2', 'm1', 'm2'].map(id => {
     const el = document.getElementById(id);
     return {
@@ -339,6 +397,88 @@
     renderElapsed();
   });
 
+  // ---- 来一下：向两台手机推送 ----
+  const callBtn = document.getElementById('callBtn');
+
+  function flashCall(text, sent) {
+    callBtn.textContent = text;
+    if (sent) callBtn.classList.add('sent');
+    setTimeout(() => {
+      callBtn.classList.remove('sent');
+      callBtn.textContent = '来一下';
+      callBtn.disabled = false;
+    }, 2500);
+  }
+
+  function sendCall() {
+    const keys = BARK_KEYS.filter(k => k && !/^PHONE_\d_KEY$/.test(k));
+    if (keys.length === 0) {
+      flashCall('未配置 key', false);
+      return;
+    }
+    const path = '/' + encodeURIComponent(BARK_TITLE) + '/' + encodeURIComponent(BARK_BODY)
+               + '?group=' + encodeURIComponent(BARK_GROUP);
+    // no-cors：发完即走，无需服务器返回 CORS 头；失败也不阻塞 UI
+    Promise.allSettled(
+      keys.map(k => fetch(BARK_SERVER + '/' + k + path, { mode: 'no-cors', cache: 'no-store' }))
+    ).then(() => flashCall('已发送 ✓', true));
+  }
+
+  callBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (callBtn.disabled) return;
+    callBtn.disabled = true;
+    callBtn.textContent = '发送中…';
+    sendCall();
+  });
+
+  // ---- 上下滑动调暗屏幕（黑色蒙版模拟；网页无法改系统亮度）----
+  const DIM_KEY = 'dimLevel';
+  const dimmer = document.getElementById('dimmer');
+  const dimHint = document.getElementById('dimHint');
+  const MAX_DIM = 0.85;            // 最暗仍保留约 15% 可见，避免全黑看不到时钟
+  let dimLevel = 0;                // 0 = 最亮（无蒙版），MAX_DIM = 最暗
+  let dragStartY = null;
+  let dragStartDim = 0;
+  let moved = false;
+  let hintTimer = null;
+
+  function applyDim() { dimmer.style.opacity = String(dimLevel); }
+  function showHint() {
+    dimHint.textContent = '☀ ' + Math.round((1 - dimLevel) * 100) + '%';
+    dimHint.classList.add('show');
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => dimHint.classList.remove('show'), 700);
+  }
+  (function loadDim() {
+    const v = parseFloat(localStorage.getItem(DIM_KEY));
+    if (!isNaN(v)) dimLevel = Math.min(MAX_DIM, Math.max(0, v));
+    applyDim();
+  })();
+
+  document.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return; // 按钮上的操作交给按钮自己
+    dragStartY = e.clientY;
+    dragStartDim = dimLevel;
+    moved = false;
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (dragStartY === null) return;
+    const dy = e.clientY - dragStartY;
+    if (Math.abs(dy) > 6) moved = true;
+    // 向下滑 = 更暗，向上滑 = 更亮
+    dimLevel = Math.min(MAX_DIM, Math.max(0, dragStartDim + dy / (window.innerHeight * 0.7)));
+    applyDim();
+    showHint();
+  });
+  function endDrag() {
+    if (dragStartY === null) return;
+    dragStartY = null;
+    localStorage.setItem(DIM_KEY, String(dimLevel));
+  }
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
   loadRecords();
   renderRecords();
   renderElapsed();
@@ -353,6 +493,7 @@
 
   // Tap the clock (not the timer controls) to toggle fullscreen
   document.querySelector('.clock').addEventListener('click', () => {
+    if (moved) { moved = false; return; } // 刚才是滑动调暗，不触发全屏
     if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     } else if (document.fullscreenElement) {
