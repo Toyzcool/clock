@@ -371,7 +371,11 @@
   }
   keepAwake();
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') keepAwake();
+    if (document.visibilityState === 'visible') {
+      keepAwake();
+      // 后台/熄屏会暂停 setInterval，回到页面立即刷新时钟与「距离上一次」
+      tick();
+    }
   });
 </script>
 </body>
