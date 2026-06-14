@@ -22,34 +22,43 @@
     padding-bottom: env(safe-area-inset-bottom);
     padding-top: env(safe-area-inset-top);
   }
+  .stage {
+    /* one cell = one flip-card width; clamp by BOTH viewport axes so
+       4 digits + colon never overflow horizontally (portrait fix) */
+    --cell: min(17vw, 26vh);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(var(--cell) * 0.34);
+  }
   .clock {
     display: flex;
-    gap: 4vmin;
+    gap: calc(var(--cell) * 0.14);
     align-items: center;
   }
   .flip {
     position: relative;
-    width: 28vmin;
-    height: 40vmin;
+    width: var(--cell);
+    height: calc(var(--cell) * 1.42);
     perspective: 600px;
   }
   .card {
     position: absolute;
     inset: 0;
-    border-radius: 2.5vmin;
+    border-radius: calc(var(--cell) * 0.09);
     background: #111;
     overflow: hidden;
   }
   .card .digit {
     position: absolute;
     left: 0; right: 0;
-    height: 40vmin;
+    height: calc(var(--cell) * 1.42);
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: "Helvetica Neue", "PingFang SC", sans-serif;
     font-weight: 800;
-    font-size: 32vmin;
+    font-size: calc(var(--cell) * 1.14);
     line-height: 1;
     color: #c9a26a;
     font-variant-numeric: tabular-nums;
@@ -112,15 +121,74 @@
   }
 
   .colon {
-    font-size: 24vmin;
+    font-size: calc(var(--cell) * 0.85);
     line-height: 1;
     font-weight: 800;
     color: #c9a26a;
-    transform: translateY(-1vmin);
+    transform: translateY(calc(var(--cell) * -0.04));
   }
+
+  /* ---- Timer / 计时 ---- */
+  .timer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(var(--cell) * 0.18);
+  }
+  /* 模块一：最近 3 次记录 */
+  .records {
+    display: flex;
+    gap: calc(var(--cell) * 0.16);
+    align-items: center;
+    min-height: calc(var(--cell) * 0.52);
+  }
+  .records:empty::after {
+    content: "暂无记录";
+    color: #4a4a4a;
+    font-size: calc(var(--cell) * 0.26);
+    font-weight: 600;
+  }
+  .chip {
+    appearance: none; -webkit-appearance: none;
+    font-family: inherit;
+    font-size: calc(var(--cell) * 0.34);
+    font-weight: 700;
+    color: #c9a26a;
+    background: transparent;
+    border: 2px solid rgba(201, 162, 106, 0.5);
+    border-radius: 999px;
+    padding: calc(var(--cell) * 0.07) calc(var(--cell) * 0.2);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .chip:active { background: rgba(201, 162, 106, 0.18); }
+  /* 模块二：距离上一次 */
+  .elapsed {
+    font-size: calc(var(--cell) * 0.32);
+    font-weight: 700;
+    color: #c9a26a;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+  .rec-btn {
+    appearance: none; -webkit-appearance: none;
+    font-family: inherit;
+    font-size: calc(var(--cell) * 0.4);
+    font-weight: 800;
+    color: #000;
+    background: #c9a26a;
+    border: none;
+    border-radius: 999px;
+    padding: calc(var(--cell) * 0.16) calc(var(--cell) * 0.7);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .rec-btn:active { transform: scale(0.96); }
 </style>
 </head>
 <body>
+  <div class="stage">
   <div class="clock">
     <div class="flip" id="h1">
       <div class="card top"><div class="digit">0</div></div>
@@ -147,6 +215,13 @@
       <div class="card flip-top"><div class="digit">0</div></div>
       <div class="card flip-bottom"><div class="digit">0</div></div>
     </div>
+  </div>
+
+  <div class="timer">
+    <div class="records" id="records"></div>
+    <div class="elapsed" id="elapsed">距离上一次：-- : --</div>
+    <button class="rec-btn" id="recBtn">喝完了</button>
+  </div>
   </div>
 
 <script>
@@ -198,12 +273,86 @@
     digits.forEach((d, i) => setSlot(slots[i], d));
   }
 
-  update();
-  // Tick every second to catch minute changes promptly
-  setInterval(update, 1000);
+  // ---- Timer / 计时 ----
+  const STORE_KEY = 'feedRecords';
+  const recordsEl = document.getElementById('records');
+  const elapsedEl = document.getElementById('elapsed');
+  const recBtn = document.getElementById('recBtn');
+  let records = []; // ascending list of timestamps (ms), keep newest 10
 
-  // Tap toggles fullscreen
-  document.body.addEventListener('click', () => {
+  function loadRecords() {
+    try { records = JSON.parse(localStorage.getItem(STORE_KEY)) || []; }
+    catch (e) { records = []; }
+    if (!Array.isArray(records)) records = [];
+  }
+  function saveRecords() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(records)); } catch (e) {}
+  }
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function fmtClock(ts) {
+    const d = new Date(ts);
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  // 模块一：保留最近 10 次，只展示最近 3 次（左→右，最右最新）；点击删除该条
+  function renderRecords() {
+    records.sort((a, b) => a - b);
+    if (records.length > 10) records = records.slice(records.length - 10);
+    const show = records.slice(Math.max(0, records.length - 3));
+    recordsEl.innerHTML = '';
+    show.forEach(ts => {
+      const chip = document.createElement('button');
+      chip.className = 'chip';
+      chip.textContent = fmtClock(ts);
+      chip.addEventListener('click', (e) => {
+        e.stopPropagation();
+        records = records.filter(t => t !== ts);
+        saveRecords();
+        renderRecords();
+        renderElapsed();
+      });
+      recordsEl.appendChild(chip);
+    });
+  }
+
+  // 模块二：距离最近一次计时的时间差 HH : mm
+  function renderElapsed() {
+    if (records.length === 0) {
+      elapsedEl.textContent = '距离上一次：-- : --';
+      return;
+    }
+    const last = Math.max.apply(null, records);
+    // 按「分钟」对齐计算：时钟显示的分钟 − 最新记录的分钟，
+    // 与模块一展示的 HH:MM 完全一致（避免秒数造成 1 分钟误差）
+    let diffMin = Math.floor(Date.now() / 60000) - Math.floor(last / 60000);
+    if (diffMin < 0) diffMin = 0;
+    const hh = pad2(Math.floor(diffMin / 60));
+    const mm = pad2(diffMin % 60);
+    elapsedEl.textContent = '距离上一次：' + hh + ' : ' + mm;
+  }
+
+  recBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    records.push(Date.now());
+    saveRecords();
+    renderRecords();
+    renderElapsed();
+  });
+
+  loadRecords();
+  renderRecords();
+  renderElapsed();
+
+  // Tick every second: refresh clock digits + elapsed counter
+  function tick() {
+    update();
+    renderElapsed();
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // Tap the clock (not the timer controls) to toggle fullscreen
+  document.querySelector('.clock').addEventListener('click', () => {
     if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
       document.documentElement.requestFullscreen().catch(() => {});
     } else if (document.fullscreenElement) {
