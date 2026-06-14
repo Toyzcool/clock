@@ -23,13 +23,19 @@
     padding-top: env(safe-area-inset-top);
   }
   .stage {
-    /* one cell = one flip-card width; clamp by BOTH viewport axes so
-       4 digits + colon never overflow horizontally (portrait fix) */
-    --cell: min(17vw, 26vh);
+    /* one cell = one flip-card width; clamp by BOTH viewport axes so the
+       whole stack (按钮+时钟+计时) fits — 22vh keeps it inside landscape
+       iPad Air 5 (1180×820) without overflowing top/bottom */
+    --cell: min(19vw, 22vh);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: calc(var(--cell) * 0.34);
+    gap: calc(var(--cell) * 0.16);
+  }
+  .calls {
+    display: flex;
+    gap: calc(var(--cell) * 0.2);
+    align-items: center;
   }
   .clock {
     display: flex;
@@ -133,14 +139,14 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: calc(var(--cell) * 0.18);
+    gap: calc(var(--cell) * 0.11);
   }
   /* 模块一：最近 3 次记录 */
   .records {
     display: flex;
-    gap: calc(var(--cell) * 0.16);
+    gap: calc(var(--cell) * 0.14);
     align-items: center;
-    min-height: calc(var(--cell) * 0.52);
+    min-height: calc(var(--cell) * 0.44);
   }
   .records:empty::after {
     content: "暂无记录";
@@ -151,13 +157,13 @@
   .chip {
     appearance: none; -webkit-appearance: none;
     font-family: inherit;
-    font-size: calc(var(--cell) * 0.34);
+    font-size: calc(var(--cell) * 0.28);
     font-weight: 700;
     color: #80693f;
     background: transparent;
     border: 2px solid rgba(201, 162, 106, 0.22);
     border-radius: 999px;
-    padding: calc(var(--cell) * 0.07) calc(var(--cell) * 0.2);
+    padding: calc(var(--cell) * 0.06) calc(var(--cell) * 0.17);
     font-variant-numeric: tabular-nums;
     cursor: pointer;
     line-height: 1;
@@ -165,7 +171,7 @@
   .chip:active { background: rgba(201, 162, 106, 0.1); }
   /* 模块二：距离上一次 */
   .elapsed {
-    font-size: calc(var(--cell) * 0.32);
+    font-size: calc(var(--cell) * 0.27);
     font-weight: 700;
     color: #8a7048;
     font-variant-numeric: tabular-nums;
@@ -174,30 +180,31 @@
   .rec-btn {
     appearance: none; -webkit-appearance: none;
     font-family: inherit;
-    font-size: calc(var(--cell) * 0.4);
+    font-size: calc(var(--cell) * 0.3);
     font-weight: 800;
     color: #a08754;
     background: rgba(201, 162, 106, 0.1);
     border: 2px solid rgba(201, 162, 106, 0.28);
     border-radius: 999px;
-    padding: calc(var(--cell) * 0.16) calc(var(--cell) * 0.7);
+    padding: calc(var(--cell) * 0.12) calc(var(--cell) * 0.5);
     cursor: pointer;
     line-height: 1;
   }
   .rec-btn:active { transform: scale(0.96); background: rgba(201, 162, 106, 0.18); }
-  /* 来一下：推送按钮（时钟上方，描边样式以区别于「喝完了」） */
+  /* 来一下：联系人推送按钮（时钟上方，描边样式以区别于「喝完了」） */
   .call-btn {
     appearance: none; -webkit-appearance: none;
     font-family: inherit;
-    font-size: calc(var(--cell) * 0.32);
+    font-size: calc(var(--cell) * 0.26);
     font-weight: 800;
     color: #80693f;
     background: transparent;
     border: 2px solid rgba(201, 162, 106, 0.28);
     border-radius: 999px;
-    padding: calc(var(--cell) * 0.12) calc(var(--cell) * 0.6);
+    padding: calc(var(--cell) * 0.1) calc(var(--cell) * 0.34);
     cursor: pointer;
     line-height: 1;
+    white-space: nowrap;
     transition: background .2s, color .2s, opacity .2s;
   }
   .call-btn:active { transform: scale(0.96); }
@@ -231,7 +238,7 @@
 </head>
 <body>
   <div class="stage">
-  <button class="call-btn" id="callBtn">来一下</button>
+  <div class="calls" id="calls"></div>
   <div class="clock">
     <div class="flip" id="h1">
       <div class="card top"><div class="digit">0</div></div>
@@ -272,10 +279,10 @@
 
 <script>
   // ===================== Bark 推送配置 =====================
-  // 把下面两个占位符换成两台手机 Bark App 首页显示的 key（22 位字符串）
-  const BARK_KEYS = [
-    'mLjHs43zVgDTjGWVtBhJrH',   // 手机一
-    '7GraXZMisGw7WZYWbt34D',    // 手机二
+  // 每个联系人一个按钮：name = 按钮文案，key = 该手机 Bark App 首页的 key
+  const BARK_CONTACTS = [
+    { name: '小莫', key: 'mLjHs43zVgDTjGWVtBhJrH' },
+    { name: '小张', key: '7GraXZMisGw7WZYWbt34D' },
   ];
   const BARK_SERVER = 'https://api.day.app'; // 官方公共服务器；自建可改成 https://你的域名
   const BARK_TITLE  = '来一下';
@@ -397,39 +404,44 @@
     renderElapsed();
   });
 
-  // ---- 来一下：向两台手机推送 ----
-  const callBtn = document.getElementById('callBtn');
+  // ---- 来一下：每个联系人一个按钮，单独推送 ----
+  const callsEl = document.getElementById('calls');
 
-  function flashCall(text, sent) {
-    callBtn.textContent = text;
-    if (sent) callBtn.classList.add('sent');
-    setTimeout(() => {
-      callBtn.classList.remove('sent');
-      callBtn.textContent = '来一下';
-      callBtn.disabled = false;
-    }, 2500);
-  }
-
-  function sendCall() {
-    const keys = BARK_KEYS.filter(k => k && !/^PHONE_\d_KEY$/.test(k));
-    if (keys.length === 0) {
-      flashCall('未配置 key', false);
+  function sendOne(contact, btn) {
+    const key = contact.key;
+    if (!key || /^PHONE_\d_KEY$/.test(key)) {
+      btn.textContent = '未配置';
+      setTimeout(() => { btn.textContent = contact.name; btn.disabled = false; }, 2000);
       return;
     }
     const path = '/' + encodeURIComponent(BARK_TITLE) + '/' + encodeURIComponent(BARK_BODY)
                + '?group=' + encodeURIComponent(BARK_GROUP);
     // no-cors：发完即走，无需服务器返回 CORS 头；失败也不阻塞 UI
     Promise.allSettled(
-      keys.map(k => fetch(BARK_SERVER + '/' + k + path, { mode: 'no-cors', cache: 'no-store' }))
-    ).then(() => flashCall('已发送 ✓', true));
+      [fetch(BARK_SERVER + '/' + key + path, { mode: 'no-cors', cache: 'no-store' })]
+    ).then(() => {
+      btn.classList.add('sent');
+      btn.textContent = '已通知 ✓';
+      setTimeout(() => {
+        btn.classList.remove('sent');
+        btn.textContent = contact.name;
+        btn.disabled = false;
+      }, 2500);
+    });
   }
 
-  callBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (callBtn.disabled) return;
-    callBtn.disabled = true;
-    callBtn.textContent = '发送中…';
-    sendCall();
+  BARK_CONTACTS.forEach(contact => {
+    const btn = document.createElement('button');
+    btn.className = 'call-btn';
+    btn.textContent = contact.name;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = '发送中…';
+      sendOne(contact, btn);
+    });
+    callsEl.appendChild(btn);
   });
 
   // ---- 上下滑动调暗屏幕（黑色蒙版模拟；网页无法改系统亮度）----
